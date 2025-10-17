@@ -1,0 +1,26 @@
+{
+  "name": "password-entropy-api",
+  "version": "1.0.0",
+  "description": "API para evaluar la fuerza de contraseñas mediante cálculo de entropía",
+  "main": "src/app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "test": "node --test test/*.test.js",
+    "verify": "node verify-complete-implementation.js",
+    "demo": "npm run verify"
+  },
+  "keywords": ["password", "entropy", "security", "api"],
+  "author": "Tu Nombre",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "papaparse": "^5.4.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
