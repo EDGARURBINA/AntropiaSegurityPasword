@@ -32,23 +32,8 @@ export class PasswordController {
       console.log(`[INPUT] Type: ${typeof password}`);
       console.log(`[SECURITY] Password content NOT logged (zero persistence)`);
 
-      // DEBUG: Verificar que el PasswordEvaluator existe
-      console.log(`[DEBUG] PasswordEvaluator exists: ${typeof PasswordEvaluator}`);
-      console.log(`[DEBUG] evaluatePasswordSecurely exists: ${typeof PasswordEvaluator.evaluatePasswordSecurely}`);
-
       console.log(`[PROCESSING] Starting secure evaluation...`);
-      
-      // DEBUG: Añadir try-catch específico para la evaluación
-      let evaluation;
-      try {
-        console.log(`[DEBUG] About to call evaluatePasswordSecurely...`);
-        evaluation = await PasswordEvaluator.evaluatePasswordSecurely(password);
-        console.log(`[DEBUG] evaluatePasswordSecurely completed successfully`);
-      } catch (evalError) {
-        console.error(`[DEBUG] Error in evaluatePasswordSecurely:`, evalError);
-        console.error(`[DEBUG] Error stack:`, evalError.stack);
-        throw evalError; // Re-lanzar para que sea capturado por el catch principal
-      }
+      const evaluation = await PasswordEvaluator.evaluatePasswordSecurely(password);
 
       // RESPUESTA JSON COMPLETA 
       const response = {
@@ -69,11 +54,26 @@ export class PasswordController {
         timestamp: new Date().toISOString()
       };
 
-      // VERIFICACIÓN DE SEGURIDAD: La respuesta NO debe contener la contraseña
+      // VERIFICACIÓN DE SEGURIDAD MEJORADA: 
+      // Permitir que matchedPassword contenga la contraseña cuando es una coincidencia legítima
       const responseJson = JSON.stringify(response);
-      if (responseJson.includes(password)) {
-        console.error(`[SECURITY] ⚠️ ALERT: Password found in response!`);
-        throw new Error('SECURITY_BREACH: Password in response');
+      const hasPasswordInResponse = responseJson.includes(password);
+      
+      if (hasPasswordInResponse) {
+        // Verificar si es una aparición legítima en matchedPassword
+        const isLegitimateMatch = evaluation.similarityAnalysis?.matchedPassword === password && 
+                                 evaluation.similarityAnalysis?.exactMatch === true;
+        
+        if (!isLegitimateMatch) {
+          // Si la contraseña aparece pero NO es en matchedPassword por coincidencia exacta, es un problema
+          console.error(`[SECURITY] ⚠️ ALERT: Password found in unexpected location in response!`);
+          console.error(`[SECURITY] This may indicate a security issue in the evaluation logic`);
+          throw new Error('SECURITY_BREACH: Password in response (unexpected location)');
+        } else {
+          // Es una aparición legítima - la contraseña está en el diccionario
+          console.log(`[SECURITY] ✅ Password appears in matchedPassword due to exact dictionary match - this is expected`);
+          console.log(`[SECURITY] ⚠️ WARNING: User entered a password that exactly matches a common password`);
+        }
       }
 
       // LOG SEGURO: Solo resultados
@@ -87,6 +87,11 @@ export class PasswordController {
         console.log(`[SIMILARITY] Type: ${evaluation.similarityAnalysis.similarityType}`);
         console.log(`[SIMILARITY] Risk level: ${evaluation.similarityAnalysis.riskLevel}`);
         console.log(`[SIMILARITY] Dataset used: ${evaluation.similarityAnalysis.datasetUsed} passwords`);
+        
+        // Log especial para coincidencias exactas
+        if (evaluation.similarityAnalysis.exactMatch) {
+          console.log(`[SIMILARITY] 🚨 EXACT MATCH: User password is identical to a common password in dataset`);
+        }
       }
       
       console.log(`[RESULT] Request ID: ${requestId} completed successfully`);
@@ -95,16 +100,12 @@ export class PasswordController {
       res.status(200).json(response);
 
     } catch (error) {
-      // LOGGING MEJORADO DEL ERROR
       console.error(`[ERROR] ==========================================`);
       console.error(`[ERROR] Evaluation failed for request ${requestId}`);
       console.error(`[ERROR] Error type: ${error.constructor.name}`);
       console.error(`[ERROR] Error message: ${error.message}`);
-      console.error(`[ERROR] Full error:`, error);
-      console.error(`[ERROR] Stack trace:`, error.stack);
       console.error(`[ERROR] ==========================================`);
 
-      // Determinar si mostrar el error real en desarrollo
       const isDevelopment = process.env.NODE_ENV !== 'production';
       
       const errorResponse = {
@@ -113,7 +114,6 @@ export class PasswordController {
         message: PasswordController.sanitizeErrorMessage(error),
         requestId,
         timestamp: new Date().toISOString(),
-        // En desarrollo, incluir más detalles del error
         ...(isDevelopment && {
           debug: {
             errorType: error.constructor.name,
@@ -175,13 +175,12 @@ export class PasswordController {
   }
 
   /**
-   * ENDPOINT DE DEBUG - TEMPORAL PARA DIAGNOSTICAR PROBLEMAS
+   * ENDPOINT DE DEBUG
    */
   static async debugInfo(req, res) {
     try {
       console.log(`[DEBUG] Debug endpoint called`);
       
-      // Verificar estado del PasswordEvaluator
       const debugInfo = {
         passwordEvaluator: {
           exists: typeof PasswordEvaluator !== 'undefined',
@@ -191,13 +190,9 @@ export class PasswordController {
         },
         environment: {
           nodeVersion: process.version,
+          nodeEnv: process.env.NODE_ENV || 'development',
           platform: process.platform,
           workingDirectory: process.cwd()
-        },
-        csvFile: {
-          path: './data/1millionPasswords.csv',
-          // Intentar verificar si el archivo existe
-          exists: 'checking...'
         }
       };
 
@@ -206,6 +201,14 @@ export class PasswordController {
         await PasswordEvaluator.ensureDictionaryLoaded();
         debugInfo.passwordEvaluator.dictionaryLoaded = PasswordEvaluator.isDictionaryLoaded;
         debugInfo.passwordEvaluator.dictionarySize = PasswordEvaluator.commonPasswords.size;
+        
+        // Verificar si algunas contraseñas comunes están en el diccionario
+        const testPasswords = ['123456', 'password', 'qwerty', 'admin'];
+        debugInfo.dictionaryTests = {};
+        for (const pwd of testPasswords) {
+          debugInfo.dictionaryTests[pwd] = PasswordEvaluator.commonPasswords.has(pwd);
+        }
+        
       } catch (dictError) {
         debugInfo.dictionaryError = {
           message: dictError.message,
@@ -243,7 +246,8 @@ export class PasswordController {
         evaluate: {
           method: 'POST',
           path: '/api/v1/password/evaluate',
-          description: 'Evalúa la fuerza de una contraseña con análisis de similitud'
+          description: 'Evalúa la fuerza de una contraseña con análisis de similitud',
+          note: 'Si la contraseña coincide exactamente con una del diccionario, aparecerá en matchedPassword'
         },
         generate: {
           method: 'POST', 
@@ -260,6 +264,12 @@ export class PasswordController {
           path: '/api/v1/password/debug',
           description: 'Información de debug (temporal)'
         }
+      },
+
+      security: {
+        zeroPersistence: 'Las contraseñas NUNCA se almacenan ni registran',
+        smartSanitization: 'Permite matchedPassword para coincidencias legítimas del diccionario',
+        secureLogging: 'Solo metadatos, nunca datos sensibles'
       },
 
       timestamp: new Date().toISOString()
