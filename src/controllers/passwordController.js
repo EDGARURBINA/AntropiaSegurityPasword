@@ -1,4 +1,3 @@
-
 import { PasswordEvaluator } from '../passwordEvaluator.js';
 
 export class PasswordController {
@@ -6,7 +5,6 @@ export class PasswordController {
   static async evaluatePassword(req, res) {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     
-   
     console.log(`[${new Date().toISOString()}] 🔐 PASSWORD EVALUATION REQUEST`);
     console.log(`[REQUEST] ID: ${requestId}`);
     console.log(`[REQUEST] Method: ${req.method}`);
@@ -14,7 +12,6 @@ export class PasswordController {
     console.log(`[SECURITY] Zero persistence policy active`);
 
     try {
-      
       const validation = PasswordController.validateRequest(req);
       if (!validation.isValid) {
         console.log(`[VALIDATION] Request failed: ${validation.errors.join(', ')}`);
@@ -31,12 +28,10 @@ export class PasswordController {
 
       const { password } = req.body;
       
-      
       console.log(`[INPUT] Password length: ${password?.length || 0} characters`);
       console.log(`[INPUT] Type: ${typeof password}`);
       console.log(`[SECURITY] Password content NOT logged (zero persistence)`);
 
-      
       console.log(`[PROCESSING] Starting secure evaluation...`);
       const evaluation = await PasswordEvaluator.evaluatePasswordSecurely(password);
 
@@ -51,9 +46,11 @@ export class PasswordController {
           day1_functions: ['calculate_L', 'calculate_N'], 
           day2_functions: ['calculate_entropy', 'check_password_strength'],
           day3_features: ['secure_api', 'zero_persistence', 'robust_validation'],
+          // NUEVA CARACTERÍSTICA AGREGADA
+          similarity_features: ['character_removal_detection', 'leet_speak_detection', 'substring_matching'],
           endpoint: '/api/v1/password/evaluate',
           processingTime: Date.now(),
-          version: '1.0.0'
+          version: '1.1.0' // Versión actualizada
         },
         timestamp: new Date().toISOString()
       };
@@ -65,30 +62,39 @@ export class PasswordController {
         throw new Error('SECURITY_BREACH: Password in response');
       }
 
-      // LOG SEGURO: Solo resultados (Día 3)
+      // LOG SEGURO: Solo resultados (Día 3) + NUEVOS LOGS DE SIMILITUD
       console.log(`[RESULT] Entropy: ${evaluation.entropyAnalysis.value} bits`);
       console.log(`[RESULT] Category: ${evaluation.strengthEvaluation.finalCategory}`);
       console.log(`[RESULT] In dictionary: ${evaluation.dictionaryAnalysis.isCommonPassword ? 'YES' : 'NO'}`);
+      
+      // NUEVOS LOGS DE SIMILITUD
+      console.log(`[SIMILARITY] Is similar: ${evaluation.similarityAnalysis.isSimilar ? 'YES' : 'NO'}`);
+      if (evaluation.similarityAnalysis.isSimilar) {
+        console.log(`[SIMILARITY] Type: ${evaluation.similarityAnalysis.similarityType}`);
+        console.log(`[SIMILARITY] Risk level: ${evaluation.similarityAnalysis.riskLevel}`);
+        console.log(`[SIMILARITY] Dataset used: ${evaluation.similarityAnalysis.datasetUsed} passwords`);
+      }
+      
       console.log(`[RESULT] Request ID: ${requestId} completed successfully`);
       console.log(`[SECURITY] ✅ Response sanitized and verified\n`);
 
       res.status(200).json(response);
 
     } catch (error) {
-      
       console.error(`[ERROR] Evaluation failed: ${error.message}`);
       console.error(`[ERROR] Request ID: ${requestId}`);
       console.error(`[SECURITY] ✅ No sensitive data exposed in error\n`);
 
       const errorResponse = {
         success: false,
-        error: this.sanitizeErrorType(error),
-        message: this.sanitizeErrorMessage(error),
+        // 🔧 CORRECCIÓN: Cambiar "this" por "PasswordController"
+        error: PasswordController.sanitizeErrorType(error),
+        message: PasswordController.sanitizeErrorMessage(error),
         requestId,
         timestamp: new Date().toISOString()
       };
 
-      const statusCode = this.getErrorStatusCode(error);
+      const statusCode = PasswordController.getErrorStatusCode(error);
       res.status(statusCode).json(errorResponse);
     }
   }
@@ -142,13 +148,13 @@ export class PasswordController {
   }
 
   /**
-   * INFORMACIÓN DE LA API 
+   * INFORMACIÓN DE LA API - ACTUALIZADA CON NUEVAS CARACTERÍSTICAS
    */
   static getApiInfo(req, res) {
     const apiInfo = {
       name: 'Password Entropy Evaluation API',
-      version: '1.0.0',
-      description: 'API completa para evaluar la fuerza de contraseñas',
+      version: '1.1.0', // Versión actualizada
+      description: 'API completa para evaluar la fuerza de contraseñas con detección avanzada de similitud',
       
       compliance: {
         day1: {
@@ -182,6 +188,18 @@ export class PasswordController {
             'Respuesta JSON completa y sanitizada'
           ],
           status: '✅ COMPLETADO'
+        },
+        // NUEVA SECCIÓN: Características de similitud
+        similarity_detection: {
+          specification: 'Detección Avanzada de Similitud',
+          implemented: [
+            'Detección de remoción de caracteres',
+            'Detección de leet speak (substituciones)',
+            'Detección de subcadenas comunes',
+            'Análisis contra dataset de 1M+ contraseñas',
+            'Clasificación de riesgo por tipo de similitud'
+          ],
+          status: '✅ COMPLETADO'
         }
       },
 
@@ -189,12 +207,16 @@ export class PasswordController {
         evaluate: {
           method: 'POST',
           path: '/api/v1/password/evaluate',
-          description: 'Evalúa la fuerza de una contraseña',
+          description: 'Evalúa la fuerza de una contraseña con análisis de similitud',
           body: { password: 'string (requerido)' },
           features: [
             'Usa calculate_L() y calculate_N() (Día 1)',
             'Usa calculate_entropy() y check_password_strength() (Día 2)',
-            'Procesamiento seguro sin persistencia (Día 3)'
+            'Procesamiento seguro sin persistencia (Día 3)',
+            'Detección avanzada de similitud con dataset CSV',
+            'Análisis de remoción de caracteres',
+            'Detección de leet speak y substituciones',
+            'Evaluación de subcadenas comunes'
           ]
         },
         generate: {
@@ -226,11 +248,32 @@ export class PasswordController {
         }
       },
 
+      // NUEVA SECCIÓN: Información de similitud
+      similarityAnalysis: {
+        description: 'Análisis avanzado de similitud contra dataset de contraseñas comunes',
+        datasetSize: 'Hasta 1,000,000+ contraseñas del archivo CSV',
+        detectionTypes: {
+          'EXACT_MATCH': 'Coincidencia exacta con contraseña común',
+          'CHARACTER_REMOVAL': 'Similar removiendo 1-2 caracteres',
+          'SIMPLE_VARIATION': 'Variación simple (agregar números/símbolos)',
+          'LEET_SPEAK_SUBSTITUTION': 'Substituciones comunes (@ por a, 3 por e)',
+          'SUBSTRING_MATCH': 'Subcadena de contraseña común',
+          'CONTAINS_COMMON': 'Contiene contraseña común'
+        },
+        riskLevels: {
+          'CRITICAL': 'Coincidencia exacta - cambiar inmediatamente',
+          'HIGH': 'Muy similar - alto riesgo de ataque',
+          'MEDIUM': 'Similitud moderada - considerar cambio',
+          'LOW': 'Sin similitudes detectadas'
+        }
+      },
+
       security: {
         zeroPersistence: 'Las contraseñas NUNCA se almacenan ni registran',
         robustValidation: 'Validación multi-nivel de entrada',
         secureLogging: 'Solo metadatos, nunca datos sensibles',
-        sanitizedResponse: 'JSON limpio sin contraseñas originales'
+        sanitizedResponse: 'JSON limpio sin contraseñas originales',
+        datasetSecurity: 'Dataset de contraseñas comunes solo en memoria durante análisis'
       },
 
       usage: {
@@ -239,7 +282,8 @@ export class PasswordController {
           headers: { 'Content-Type': 'application/json' },
           body: { password: 'tu_contraseña_aquí' }
         },
-        note: 'Política de cero persistencia garantiza que las contraseñas no se almacenan'
+        note: 'Política de cero persistencia garantiza que las contraseñas no se almacenan',
+        newFeatures: 'Ahora incluye análisis de similitud avanzado para detectar variaciones de contraseñas comunes'
       },
 
       timestamp: new Date().toISOString()
