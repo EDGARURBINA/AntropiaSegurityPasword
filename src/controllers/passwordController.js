@@ -32,8 +32,23 @@ export class PasswordController {
       console.log(`[INPUT] Type: ${typeof password}`);
       console.log(`[SECURITY] Password content NOT logged (zero persistence)`);
 
+      // DEBUG: Verificar que el PasswordEvaluator existe
+      console.log(`[DEBUG] PasswordEvaluator exists: ${typeof PasswordEvaluator}`);
+      console.log(`[DEBUG] evaluatePasswordSecurely exists: ${typeof PasswordEvaluator.evaluatePasswordSecurely}`);
+
       console.log(`[PROCESSING] Starting secure evaluation...`);
-      const evaluation = await PasswordEvaluator.evaluatePasswordSecurely(password);
+      
+      // DEBUG: Añadir try-catch específico para la evaluación
+      let evaluation;
+      try {
+        console.log(`[DEBUG] About to call evaluatePasswordSecurely...`);
+        evaluation = await PasswordEvaluator.evaluatePasswordSecurely(password);
+        console.log(`[DEBUG] evaluatePasswordSecurely completed successfully`);
+      } catch (evalError) {
+        console.error(`[DEBUG] Error in evaluatePasswordSecurely:`, evalError);
+        console.error(`[DEBUG] Error stack:`, evalError.stack);
+        throw evalError; // Re-lanzar para que sea capturado por el catch principal
+      }
 
       // RESPUESTA JSON COMPLETA 
       const response = {
@@ -46,11 +61,10 @@ export class PasswordController {
           day1_functions: ['calculate_L', 'calculate_N'], 
           day2_functions: ['calculate_entropy', 'check_password_strength'],
           day3_features: ['secure_api', 'zero_persistence', 'robust_validation'],
-          // NUEVA CARACTERÍSTICA AGREGADA
           similarity_features: ['character_removal_detection', 'leet_speak_detection', 'substring_matching'],
           endpoint: '/api/v1/password/evaluate',
           processingTime: Date.now(),
-          version: '1.1.0' // Versión actualizada
+          version: '1.1.0'
         },
         timestamp: new Date().toISOString()
       };
@@ -62,12 +76,12 @@ export class PasswordController {
         throw new Error('SECURITY_BREACH: Password in response');
       }
 
-      // LOG SEGURO: Solo resultados (Día 3) + NUEVOS LOGS DE SIMILITUD
+      // LOG SEGURO: Solo resultados
       console.log(`[RESULT] Entropy: ${evaluation.entropyAnalysis.value} bits`);
       console.log(`[RESULT] Category: ${evaluation.strengthEvaluation.finalCategory}`);
       console.log(`[RESULT] In dictionary: ${evaluation.dictionaryAnalysis.isCommonPassword ? 'YES' : 'NO'}`);
       
-      // NUEVOS LOGS DE SIMILITUD
+      // LOGS DE SIMILITUD
       console.log(`[SIMILARITY] Is similar: ${evaluation.similarityAnalysis.isSimilar ? 'YES' : 'NO'}`);
       if (evaluation.similarityAnalysis.isSimilar) {
         console.log(`[SIMILARITY] Type: ${evaluation.similarityAnalysis.similarityType}`);
@@ -81,17 +95,32 @@ export class PasswordController {
       res.status(200).json(response);
 
     } catch (error) {
-      console.error(`[ERROR] Evaluation failed: ${error.message}`);
-      console.error(`[ERROR] Request ID: ${requestId}`);
-      console.error(`[SECURITY] ✅ No sensitive data exposed in error\n`);
+      // LOGGING MEJORADO DEL ERROR
+      console.error(`[ERROR] ==========================================`);
+      console.error(`[ERROR] Evaluation failed for request ${requestId}`);
+      console.error(`[ERROR] Error type: ${error.constructor.name}`);
+      console.error(`[ERROR] Error message: ${error.message}`);
+      console.error(`[ERROR] Full error:`, error);
+      console.error(`[ERROR] Stack trace:`, error.stack);
+      console.error(`[ERROR] ==========================================`);
 
+      // Determinar si mostrar el error real en desarrollo
+      const isDevelopment = process.env.NODE_ENV !== 'production';
+      
       const errorResponse = {
         success: false,
-        // 🔧 CORRECCIÓN: Cambiar "this" por "PasswordController"
         error: PasswordController.sanitizeErrorType(error),
         message: PasswordController.sanitizeErrorMessage(error),
         requestId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        // En desarrollo, incluir más detalles del error
+        ...(isDevelopment && {
+          debug: {
+            errorType: error.constructor.name,
+            originalMessage: error.message,
+            note: 'Debug info only shown in development'
+          }
+        })
       };
 
       const statusCode = PasswordController.getErrorStatusCode(error);
@@ -106,7 +135,6 @@ export class PasswordController {
     try {
       const { length = 16, includeLowercase = true, includeUppercase = true, includeNumbers = true, includeSymbols = true } = req.body || {};
 
-      // Validar parámetros
       if (typeof length !== 'number' || length < 4 || length > 100) {
         return res.status(400).json({
           success: false,
@@ -116,12 +144,10 @@ export class PasswordController {
         });
       }
 
-      // Generar contraseña con CSPRNG 
       const generatedPassword = PasswordEvaluator.generateSecurePassword(length, {
         includeLowercase, includeUppercase, includeNumbers, includeSymbols
       });
 
-      // Evaluar la contraseña generada usando todas las funciones
       const evaluation = await PasswordEvaluator.evaluatePasswordSecurely(generatedPassword);
 
       const response = {
@@ -138,6 +164,7 @@ export class PasswordController {
       res.status(200).json(response);
 
     } catch (error) {
+      console.error(`[ERROR] Password generation failed:`, error);
       res.status(500).json({
         success: false,
         error: 'GENERATION_ERROR',
@@ -148,142 +175,91 @@ export class PasswordController {
   }
 
   /**
-   * INFORMACIÓN DE LA API - ACTUALIZADA CON NUEVAS CARACTERÍSTICAS
+   * ENDPOINT DE DEBUG - TEMPORAL PARA DIAGNOSTICAR PROBLEMAS
+   */
+  static async debugInfo(req, res) {
+    try {
+      console.log(`[DEBUG] Debug endpoint called`);
+      
+      // Verificar estado del PasswordEvaluator
+      const debugInfo = {
+        passwordEvaluator: {
+          exists: typeof PasswordEvaluator !== 'undefined',
+          methods: Object.getOwnPropertyNames(PasswordEvaluator).filter(name => typeof PasswordEvaluator[name] === 'function'),
+          dictionaryLoaded: PasswordEvaluator.isDictionaryLoaded || false,
+          dictionarySize: PasswordEvaluator.commonPasswords?.size || 0
+        },
+        environment: {
+          nodeVersion: process.version,
+          platform: process.platform,
+          workingDirectory: process.cwd()
+        },
+        csvFile: {
+          path: './data/1millionPasswords.csv',
+          // Intentar verificar si el archivo existe
+          exists: 'checking...'
+        }
+      };
+
+      // Intentar cargar el diccionario para debug
+      try {
+        await PasswordEvaluator.ensureDictionaryLoaded();
+        debugInfo.passwordEvaluator.dictionaryLoaded = PasswordEvaluator.isDictionaryLoaded;
+        debugInfo.passwordEvaluator.dictionarySize = PasswordEvaluator.commonPasswords.size;
+      } catch (dictError) {
+        debugInfo.dictionaryError = {
+          message: dictError.message,
+          type: dictError.constructor.name
+        };
+      }
+
+      res.status(200).json({
+        success: true,
+        debug: debugInfo,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      console.error(`[DEBUG] Debug endpoint error:`, error);
+      res.status(500).json({
+        success: false,
+        error: 'DEBUG_ERROR',
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * INFORMACIÓN DE LA API
    */
   static getApiInfo(req, res) {
     const apiInfo = {
       name: 'Password Entropy Evaluation API',
-      version: '1.1.0', // Versión actualizada
+      version: '1.1.0',
       description: 'API completa para evaluar la fuerza de contraseñas con detección avanzada de similitud',
       
-      compliance: {
-        day1: {
-          specification: 'Fundamentos y Diseño de la API',
-          implemented: [
-            'calculate_L(password) - Cálculo de longitud',
-            'calculate_N(password) - Cálculo de keyspace', 
-            'CSPRNG - Generador criptográficamente seguro',
-            'Formula E = L × log₂(N) - Cálculo de entropía',
-            'Backend Node.js/Express'
-          ],
-          status: '✅ COMPLETADO'
-        },
-        day2: {
-          specification: 'Entropía y Evaluación de Calidad',
-          implemented: [
-            'calculate_entropy(password) - Usando funciones L y N',
-            'check_password_strength(password, entropy) - Evaluación completa',
-            'Categorización basada en entropía',
-            'Lógica de diccionario con penalización',
-            'Tiempo de crackeo con 10^11 intentos/segundo'
-          ],
-          status: '✅ COMPLETADO'
-        },
-        day3: {
-          specification: 'API, Seguridad y Entrega',
-          implemented: [
-            'Endpoint /api/v1/password/evaluate funcional',
-            'CERO PERSISTENCIA - No logging de contraseñas',
-            'Validación robusta de entrada',
-            'Respuesta JSON completa y sanitizada'
-          ],
-          status: '✅ COMPLETADO'
-        },
-        // NUEVA SECCIÓN: Características de similitud
-        similarity_detection: {
-          specification: 'Detección Avanzada de Similitud',
-          implemented: [
-            'Detección de remoción de caracteres',
-            'Detección de leet speak (substituciones)',
-            'Detección de subcadenas comunes',
-            'Análisis contra dataset de 1M+ contraseñas',
-            'Clasificación de riesgo por tipo de similitud'
-          ],
-          status: '✅ COMPLETADO'
-        }
-      },
-
       endpoints: {
         evaluate: {
           method: 'POST',
           path: '/api/v1/password/evaluate',
-          description: 'Evalúa la fuerza de una contraseña con análisis de similitud',
-          body: { password: 'string (requerido)' },
-          features: [
-            'Usa calculate_L() y calculate_N() (Día 1)',
-            'Usa calculate_entropy() y check_password_strength() (Día 2)',
-            'Procesamiento seguro sin persistencia (Día 3)',
-            'Detección avanzada de similitud con dataset CSV',
-            'Análisis de remoción de caracteres',
-            'Detección de leet speak y substituciones',
-            'Evaluación de subcadenas comunes'
-          ]
+          description: 'Evalúa la fuerza de una contraseña con análisis de similitud'
         },
         generate: {
           method: 'POST', 
           path: '/api/v1/password/generate',
-          description: 'Genera contraseña segura con CSPRNG',
-          body: { length: 'number', includeSymbols: 'boolean' }
+          description: 'Genera contraseña segura con CSPRNG'
         },
         info: {
           method: 'GET',
           path: '/api/v1/password/info', 
           description: 'Información de la API'
-        }
-      },
-
-      entropyCalculation: {
-        formula: 'E = L × log₂(N)',
-        functions: {
-          calculate_L: 'Calcula longitud de contraseña',
-          calculate_N: 'Calcula tamaño del keyspace',
-          calculate_entropy: 'Aplica fórmula usando L y N'
         },
-        strengthCategories: {
-          'Muy Débil': '0-30 bits',
-          'Débil': '30-60 bits', 
-          'Fuerte': '60-80 bits',
-          'Muy Fuerte': '80-100 bits',
-          'Extremadamente Fuerte': '100+ bits'
+        debug: {
+          method: 'GET',
+          path: '/api/v1/password/debug',
+          description: 'Información de debug (temporal)'
         }
-      },
-
-      // NUEVA SECCIÓN: Información de similitud
-      similarityAnalysis: {
-        description: 'Análisis avanzado de similitud contra dataset de contraseñas comunes',
-        datasetSize: 'Hasta 1,000,000+ contraseñas del archivo CSV',
-        detectionTypes: {
-          'EXACT_MATCH': 'Coincidencia exacta con contraseña común',
-          'CHARACTER_REMOVAL': 'Similar removiendo 1-2 caracteres',
-          'SIMPLE_VARIATION': 'Variación simple (agregar números/símbolos)',
-          'LEET_SPEAK_SUBSTITUTION': 'Substituciones comunes (@ por a, 3 por e)',
-          'SUBSTRING_MATCH': 'Subcadena de contraseña común',
-          'CONTAINS_COMMON': 'Contiene contraseña común'
-        },
-        riskLevels: {
-          'CRITICAL': 'Coincidencia exacta - cambiar inmediatamente',
-          'HIGH': 'Muy similar - alto riesgo de ataque',
-          'MEDIUM': 'Similitud moderada - considerar cambio',
-          'LOW': 'Sin similitudes detectadas'
-        }
-      },
-
-      security: {
-        zeroPersistence: 'Las contraseñas NUNCA se almacenan ni registran',
-        robustValidation: 'Validación multi-nivel de entrada',
-        secureLogging: 'Solo metadatos, nunca datos sensibles',
-        sanitizedResponse: 'JSON limpio sin contraseñas originales',
-        datasetSecurity: 'Dataset de contraseñas comunes solo en memoria durante análisis'
-      },
-
-      usage: {
-        example: {
-          request: 'POST /api/v1/password/evaluate',
-          headers: { 'Content-Type': 'application/json' },
-          body: { password: 'tu_contraseña_aquí' }
-        },
-        note: 'Política de cero persistencia garantiza que las contraseñas no se almacenan',
-        newFeatures: 'Ahora incluye análisis de similitud avanzado para detectar variaciones de contraseñas comunes'
       },
 
       timestamp: new Date().toISOString()
@@ -298,18 +274,15 @@ export class PasswordController {
   static validateRequest(req) {
     const errors = [];
 
-    // Validar Content-Type
     const contentType = req.get('Content-Type');
     if (!contentType || !contentType.includes('application/json')) {
       errors.push('CONTENT_TYPE_INVALID: Se requiere application/json');
     }
 
-    // Validar body
     if (!req.body || typeof req.body !== 'object') {
       errors.push('BODY_MISSING: Body de petición requerido');
     }
 
-    // Validar campo password
     if (req.body && !req.body.hasOwnProperty('password')) {
       errors.push('FIELD_MISSING: Campo "password" requerido');
     }
@@ -350,9 +323,6 @@ export class PasswordController {
     return statusCodes[errorType] || 500;
   }
 
-  /**
-   * MANEJO DE RUTAS NO ENCONTRADAS
-   */
   static notFound(req, res) {
     res.status(404).json({
       success: false,
@@ -361,6 +331,7 @@ export class PasswordController {
       availableEndpoints: [
         'GET /health',
         'GET /api/v1/password/info',
+        'GET /api/v1/password/debug',
         'POST /api/v1/password/evaluate', 
         'POST /api/v1/password/generate'
       ],
