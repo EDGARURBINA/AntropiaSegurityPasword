@@ -1,4 +1,3 @@
-
 export class PasswordEvaluator {
   
   // Diccionario de contraseñas comunes 
@@ -20,7 +19,6 @@ export class PasswordEvaluator {
     return password.length;
   }
 
-
   static calculate_N(password) {
     if (typeof password !== 'string') {
       throw new Error('La contraseña debe ser una cadena de texto');
@@ -36,7 +34,6 @@ export class PasswordEvaluator {
     return keyspace;
   }
 
- 
   static calculate_entropy(password) {
     const L = this.calculate_L(password); 
     const N = this.calculate_N(password);  
@@ -46,43 +43,256 @@ export class PasswordEvaluator {
     const entropy = L * Math.log2(N);  // Fórmula E = L × log₂(N)
     return Math.round(entropy * 100) / 100;
   }
-
   
+  /**
+   * FUNCIÓN PRINCIPAL: Detecta si una contraseña es similar a alguna del diccionario
+   */
+  static checkPasswordSimilarity(password) {
+    const passwordLower = password.toLowerCase();
+    
+    // 1. Verificación exacta
+    if (this.commonPasswords.has(passwordLower)) {
+      return {
+        isSimilar: true,
+        exactMatch: true,
+        matchedPassword: passwordLower,
+        similarityType: 'EXACT_MATCH',
+        confidence: 1.0
+      };
+    }
+
+    // 2. Verificación de variaciones simples  
+    const simpleVariations = [
+      passwordLower + '1',
+      passwordLower + '123', 
+      passwordLower + '!',
+      passwordLower + '2024',
+      '1' + passwordLower,
+      passwordLower.slice(0, -1), // quitar último carácter
+      passwordLower.slice(1)      // quitar primer carácter
+    ];
+
+    for (const variation of simpleVariations) {
+      if (this.commonPasswords.has(variation)) {
+        return {
+          isSimilar: true,
+          exactMatch: false,
+          matchedPassword: variation,
+          similarityType: 'SIMPLE_VARIATION',
+          confidence: 0.9
+        };
+      }
+    }
+
+    // 3. Detectar remoción de caracteres
+    const removalSimilarity = this.checkRemovalSimilarity(passwordLower);
+    if (removalSimilarity.isSimilar) {
+      return removalSimilarity;
+    }
+
+    // 4. Detectar substituciones (leet speak)
+    const substitutionSimilarity = this.checkSubstitutionSimilarity(passwordLower);
+    if (substitutionSimilarity.isSimilar) {
+      return substitutionSimilarity;
+    }
+
+    // 5. Detectar subcadenas
+    const substringMatch = this.checkSubstringMatch(passwordLower);
+    if (substringMatch.isSimilar) {
+      return substringMatch;
+    }
+
+    return { isSimilar: false };
+  }
+
+  /**
+   * DETECCIÓN: Contraseñas con caracteres removidos
+   */
+  static checkRemovalSimilarity(password) {
+    console.log(`🔍 Buscando similitud por remoción en ${this.commonPasswords.size} contraseñas del dataset...`);
+    
+    // Generar variaciones quitando UN carácter
+    for (let i = 0; i < password.length; i++) {
+      const withCharRemoved = password.slice(0, i) + password.slice(i + 1);
+      
+      if (this.commonPasswords.has(withCharRemoved)) {
+        console.log(`✅ ENCONTRADA EN DATASET: "${withCharRemoved}" (removiendo '${password[i]}' en posición ${i + 1})`);
+        
+        return {
+          isSimilar: true,
+          exactMatch: false,
+          matchedPassword: withCharRemoved,
+          similarityType: 'CHARACTER_REMOVAL',
+          confidence: 0.85,
+          details: `Removiendo carácter en posición ${i + 1}: '${password[i]}'`
+        };
+      }
+    }
+
+    // Generar variaciones quitando DOS caracteres (para contraseñas no muy largas)
+    if (password.length <= 15) {
+      for (let i = 0; i < password.length; i++) {
+        for (let j = i + 1; j < password.length; j++) {
+          const withTwoCharsRemoved = password.slice(0, i) + password.slice(i + 1, j) + password.slice(j + 1);
+          
+          if (this.commonPasswords.has(withTwoCharsRemoved)) {
+            console.log(`✅ ENCONTRADA EN DATASET: "${withTwoCharsRemoved}" (removiendo '${password[i]}${password[j]}')`);
+            
+            return {
+              isSimilar: true,
+              exactMatch: false,
+              matchedPassword: withTwoCharsRemoved,
+              similarityType: 'TWO_CHARACTERS_REMOVAL',
+              confidence: 0.75,
+              details: `Removiendo caracteres en posiciones ${i + 1} y ${j + 1}: '${password[i]}${password[j]}'`
+            };
+          }
+        }
+      }
+    }
+
+    return { isSimilar: false };
+  }
+
+  /**
+   * DETECCIÓN: Substituciones comunes (leet speak)
+   */
+  static checkSubstitutionSimilarity(password) {
+    // Mapeo de substituciones comunes
+    const substitutions = {
+      '0': 'o', '1': 'i', '3': 'e', '4': 'a', 
+      '5': 's', '7': 't', '8': 'b', '@': 'a', '$': 's'
+    };
+
+    let normalizedPassword = password;
+    let substitutionCount = 0;
+
+    // Aplicar substituciones inversas
+    for (const [leet, normal] of Object.entries(substitutions)) {
+      if (normalizedPassword.includes(leet)) {
+        normalizedPassword = normalizedPassword.replace(new RegExp(leet, 'g'), normal);
+        substitutionCount++;
+      }
+    }
+
+    if (substitutionCount > 0 && this.commonPasswords.has(normalizedPassword)) {
+      console.log(`✅ LEET SPEAK DETECTADO: "${normalizedPassword}" (${substitutionCount} substituciones)`);
+      
+      return {
+        isSimilar: true,
+        exactMatch: false,
+        matchedPassword: normalizedPassword,
+        similarityType: 'LEET_SPEAK_SUBSTITUTION',
+        confidence: 0.8,
+        details: `${substitutionCount} substituciones leet speak detectadas`
+      };
+    }
+
+    return { isSimilar: false };
+  }
+
+  /**
+   * DETECCIÓN: Subcadenas de contraseñas comunes
+   */
+  static checkSubstringMatch(password) {
+    if (password.length < 4) return { isSimilar: false };
+
+    // Solo buscar en un subconjunto para performance (contraseñas largas)
+    const sampleSize = Math.min(10000, this.commonPasswords.size);
+    const passwordArray = Array.from(this.commonPasswords).slice(0, sampleSize);
+
+    for (const commonPassword of passwordArray) {
+      // Si la contraseña actual contiene una contraseña común
+      if (password.includes(commonPassword) && commonPassword.length >= 4) {
+        console.log(`✅ CONTIENE CONTRASEÑA COMÚN: "${commonPassword}"`);
+        
+        return {
+          isSimilar: true,
+          exactMatch: false,
+          matchedPassword: commonPassword,
+          similarityType: 'CONTAINS_COMMON',
+          confidence: 0.75,
+          details: `Contiene la contraseña común: '${commonPassword}'`
+        };
+      }
+      
+      // Si la contraseña actual es subcadena de una contraseña común
+      if (commonPassword.includes(password) && commonPassword !== password) {
+        console.log(`✅ ES SUBCADENA DE: "${commonPassword}"`);
+        
+        return {
+          isSimilar: true,
+          exactMatch: false,
+          matchedPassword: commonPassword,
+          similarityType: 'SUBSTRING_MATCH',
+          confidence: 0.7,
+          details: `Es parte de: '${commonPassword}'`
+        };
+      }
+    }
+
+    return { isSimilar: false };
+  }
+
+  /**
+   * FUNCIÓN PRINCIPAL: Evaluación de fuerza con análisis de similitud
+   */
   static async check_password_strength(password, entropy) {
     await this.ensureDictionaryLoaded();
 
     // 1. Categorización basada en entropía
     const baseCategory = this.categorizeByEntropy(entropy);
 
-    // 2. Verificación contra diccionario 
-    const isCommon = this.commonPasswords.has(password.toLowerCase()) ||
-                     this.commonPasswords.has(password.toLowerCase() + '1') ||
-                     this.commonPasswords.has(password.toLowerCase() + '123');
+    // 2. Análisis de similitud completo
+    const similarityAnalysis = this.checkPasswordSimilarity(password);
 
-    // 3. Aplicar penalización si está en diccionario
+    // 3. Aplicar penalización basada en tipo de similitud
     let finalCategory = baseCategory;
-    if (isCommon) {
+    
+    if (similarityAnalysis.isSimilar) {
+      let penaltyLevel = 0;
+      
+      switch (similarityAnalysis.similarityType) {
+        case 'EXACT_MATCH':
+          penaltyLevel = 3; // Penalización máxima
+          break;
+        case 'SIMPLE_VARIATION':
+        case 'CHARACTER_REMOVAL':
+        case 'TWO_CHARACTERS_REMOVAL':
+        case 'LEET_SPEAK_SUBSTITUTION':
+          penaltyLevel = 2; // Penalización alta
+          break;
+        case 'CONTAINS_COMMON':
+        case 'SUBSTRING_MATCH':
+          penaltyLevel = 1; // Penalización moderada
+          break;
+      }
+      
       finalCategory = {
         ...baseCategory,
-        category: baseCategory.level <= 2 ? 'Muy Débil' : 'Débil',
-        level: Math.max(1, baseCategory.level - 2),
+        category: baseCategory.level <= penaltyLevel ? 'Muy Débil' : 
+                 baseCategory.level <= penaltyLevel + 1 ? 'Débil' : baseCategory.category,
+        level: Math.max(1, baseCategory.level - penaltyLevel),
         penalized: true
       };
     }
 
-    // 4. Calcular tiempo de crackeo ( 10^11 intentos/segundo)
+    // 4. Calcular tiempo de crackeo (10^11 intentos/segundo)
     const crackingTime = this.calculateCrackingTime(entropy, 1e11);
 
     return {
       baseCategory,
       finalCategory, 
-      isCommon,
+      isCommon: similarityAnalysis.exactMatch,
+      similarityAnalysis,
       crackingTime,
       entropy
     };
   }
 
- 
+  /**
+   * FUNCIÓN PRINCIPAL: Evaluación completa de contraseña
+   */
   static async evaluatePasswordSecurely(password) {
     // VALIDACIÓN ROBUSTA 
     this.validateInputRobustly(password);
@@ -131,31 +341,47 @@ export class PasswordEvaluator {
       dictionaryAnalysis: {
         isCommonPassword: strengthEval.isCommon,
         dictionarySize: this.commonPasswords.size,
-        riskLevel: strengthEval.isCommon ? 'HIGH' : 'LOW'
+        riskLevel: strengthEval.isCommon ? 'CRITICAL' : 
+                  strengthEval.similarityAnalysis.isSimilar ? 'HIGH' : 'LOW'
       },
 
-      // Métricas de seguridad ( 10^11 intentos/seg)
+      // Análisis de similitud detallado
+      similarityAnalysis: {
+        isSimilar: strengthEval.similarityAnalysis.isSimilar,
+        exactMatch: strengthEval.similarityAnalysis.exactMatch,
+        similarityType: strengthEval.similarityAnalysis.similarityType,
+        confidence: strengthEval.similarityAnalysis.confidence,
+        matchedPassword: strengthEval.similarityAnalysis.matchedPassword,
+        details: strengthEval.similarityAnalysis.details,
+        datasetUsed: this.commonPasswords.size,
+        riskLevel: this.getSimilarityRiskLevel(strengthEval.similarityAnalysis)
+      },
+
+      // Métricas de seguridad (10^11 intentos/seg)
       securityMetrics: {
         estimatedCrackingTime: strengthEval.crackingTime.formatted,
         attemptsPerSecond: '1.0e+11',
         specification: 'Día 2: 10^11 intentos/segundo'
       },
 
-      // Recomendaciones
-      recommendations: this.generateRecommendations(strengthEval),
+      // Recomendaciones mejoradas
+      recommendations: this.generateEnhancedRecommendations(strengthEval),
 
       // Información de cumplimiento 
       compliance: {
         day1: 'calculate_L() y calculate_N() implementadas',
         day2: 'calculate_entropy() y check_password_strength() implementadas', 
-        day3: 'API segura con cero persistencia implementada'
+        day3: 'API segura con cero persistencia implementada',
+        similarity: 'Análisis avanzado de similitud con dataset CSV implementado'
       },
 
       timestamp: new Date().toISOString()
     };
   }
 
-
+  /**
+   * UTILIDADES: Validación y categorización
+   */
   static validateInputRobustly(password) {
     if (typeof password !== 'string') {
       throw new Error('INVALID_TYPE: Se requiere una cadena de texto');
@@ -174,6 +400,25 @@ export class PasswordEvaluator {
     if (entropy < 80) return { category: 'Fuerte', level: 3 };
     if (entropy < 100) return { category: 'Muy Fuerte', level: 4 };
     return { category: 'Extremadamente Fuerte', level: 5 };
+  }
+
+  static getSimilarityRiskLevel(similarityAnalysis) {
+    if (!similarityAnalysis.isSimilar) return 'LOW';
+    
+    switch (similarityAnalysis.similarityType) {
+      case 'EXACT_MATCH':
+        return 'CRITICAL';
+      case 'SIMPLE_VARIATION':
+      case 'CHARACTER_REMOVAL':
+      case 'TWO_CHARACTERS_REMOVAL':
+      case 'LEET_SPEAK_SUBSTITUTION':
+        return 'HIGH';
+      case 'CONTAINS_COMMON':
+      case 'SUBSTRING_MATCH':
+        return 'MEDIUM';
+      default:
+        return 'LOW';
+    }
   }
 
   static calculateCrackingTime(entropy, attemptsPerSecond = 1e11) {
@@ -207,16 +452,48 @@ export class PasswordEvaluator {
     return descriptions[category.category] || 'Evaluación de seguridad';
   }
 
-  static generateRecommendations(strengthEval) {
+  /**
+   * RECOMENDACIONES MEJORADAS: Incluye análisis de similitud
+   */
+  static generateEnhancedRecommendations(strengthEval) {
     const recommendations = [];
     
-    if (strengthEval.isCommon) {
-      recommendations.push('🚨 CRÍTICO: Cambiar inmediatamente - contraseña muy común');
+    // Recomendaciones basadas en similitud
+    if (strengthEval.similarityAnalysis?.exactMatch) {
+      recommendations.push('🚨 CRÍTICO: Contraseña idéntica a una muy común - CAMBIAR INMEDIATAMENTE');
+    } else if (strengthEval.similarityAnalysis?.isSimilar) {
+      const type = strengthEval.similarityAnalysis.similarityType;
+      const details = strengthEval.similarityAnalysis.details;
+      
+      switch (type) {
+        case 'SIMPLE_VARIATION':
+          recommendations.push('⚠️ ALTO RIESGO: Variación simple de contraseña común detectada');
+          break;
+        case 'CHARACTER_REMOVAL':
+        case 'TWO_CHARACTERS_REMOVAL':
+          recommendations.push(`⚠️ ALTO RIESGO: Muy similar a contraseña común (${details})`);
+          break;
+        case 'LEET_SPEAK_SUBSTITUTION':
+          recommendations.push('⚠️ ALTO RIESGO: Substituciones leet speak detectadas - fácil de adivinar');
+          break;
+        case 'CONTAINS_COMMON':
+          recommendations.push(`🔍 RIESGO MEDIO: Contiene contraseña común (${details})`);
+          break;
+        case 'SUBSTRING_MATCH':
+          recommendations.push(`🔍 RIESGO MEDIO: Es parte de contraseña común (${details})`);
+          break;
+      }
     }
     
+    // Recomendaciones basadas en fortaleza
     if (strengthEval.finalCategory.level <= 2) {
       recommendations.push('📏 Aumentar longitud a mínimo 12 caracteres');
       recommendations.push('🔤 Incluir mezcla de mayúsculas, minúsculas, números y símbolos');
+    }
+    
+    // Recomendaciones adicionales
+    if (strengthEval.similarityAnalysis?.isSimilar) {
+      recommendations.push('🎲 Usar generador aleatorio en lugar de modificar contraseñas existentes');
     }
     
     recommendations.push('🔐 Usar administrador de contraseñas');
@@ -225,32 +502,46 @@ export class PasswordEvaluator {
     return recommendations;
   }
 
+  // Mantener compatibilidad con el código original
+  static generateRecommendations(strengthEval) {
+    return this.generateEnhancedRecommendations(strengthEval);
+  }
+
+  /**
+   * CARGA DEL DATASET: Mejorada con logging detallado
+   */
   static async ensureDictionaryLoaded() {
     if (this.isDictionaryLoaded) return;
     
     try {
-      // USAR TU ARCHIVO CSV REAL (Requerimiento Día 2)
+      console.log('📁 Iniciando carga del dataset CSV...');
       await this.loadPasswordsFromCSV('./data/1millionPasswords.csv');
-      console.log(`✅ Diccionario cargado desde CSV: ${this.commonPasswords.size} contraseñas`);
+      console.log(`✅ DATASET CSV CARGADO EXITOSAMENTE`);
+      console.log(`📊 Tamaño del diccionario: ${this.commonPasswords.size.toLocaleString()} contraseñas`);
+      console.log(`🔍 DETECCIÓN DE SIMILITUD ACTIVADA: Analizará ${this.commonPasswords.size.toLocaleString()} contraseñas reales`);
+      console.log(`🛡️  Sistema listo para detectar variaciones y similitudes\n`);
+      
     } catch (error) {
-      console.log(`⚠️  No se pudo cargar CSV (${error.message}), usando diccionario básico...`);
+      console.log(`⚠️  ERROR cargando dataset CSV: ${error.message}`);
+      console.log(`🔧 Activando diccionario básico de respaldo...`);
       
       // Fallback: diccionario básico si no existe el archivo
       const basicPasswords = [
         'password', 'password123', '123456', '123456789', 'qwerty',
         'abc123', 'password1', 'admin', 'letmein', 'welcome',
-        'monkey', '1234567890', 'dragon', 'sunshine', 'princess'
+        'monkey', '1234567890', 'dragon', 'sunshine', 'princess',
+        'administrator', 'root', 'test', 'guest', 'user'
       ];
       
       basicPasswords.forEach(pwd => this.commonPasswords.add(pwd.toLowerCase()));
+      console.log(`🔍 DETECCIÓN DE SIMILITUD con diccionario básico: ${this.commonPasswords.size} contraseñas\n`);
     }
     
     this.isDictionaryLoaded = true;
   }
 
   /**
-   * CARGAR CONTRASEÑAS ARCHIVO CSV 
-   * Procesa el CSV y usa solo la columna 2 
+   * CARGA CSV: Función original mantenida
    */
   static async loadPasswordsFromCSV(csvPath) {
     // Importar módulos necesarios
@@ -297,7 +588,9 @@ export class PasswordEvaluator {
     console.log(`   Diccionario final: ${this.commonPasswords.size.toLocaleString()} entradas únicas`);
   }
 
-
+  /**
+   * GENERADOR DE CONTRASEÑAS: Función original mantenida
+   */
   static generateSecurePassword(length = 16, options = {}) {
     const {
       includeLowercase = true,
@@ -326,5 +619,36 @@ export class PasswordEvaluator {
     }
 
     return password;
+  }
+
+  /**
+   * FUNCIONES DE PRUEBA OPCIONALES
+   */
+  static async runSimilarityTests() {
+    console.log('🧪 EJECUTANDO PRUEBAS DE SIMILITUD\n');
+    await this.ensureDictionaryLoaded();
+    
+    const testCases = [
+      'password12',    // Debería detectar 'password123'
+      'qwerty12',      // Debería detectar 'qwerty123'  
+      '12345678',      // Debería detectar '123456789'
+      'p4ssw0rd',      // Debería detectar leet speak
+      'admin12'        // Debería detectar 'admin123'
+    ];
+    
+    for (const testPassword of testCases) {
+      console.log(`\n🔍 Probando: "${testPassword}"`);
+      try {
+        const result = await this.evaluatePasswordSecurely(testPassword);
+        console.log(`   ¿Similar?: ${result.similarityAnalysis.isSimilar ? '✅ SÍ' : '❌ NO'}`);
+        if (result.similarityAnalysis.isSimilar) {
+          console.log(`   Tipo: ${result.similarityAnalysis.similarityType}`);
+          console.log(`   Coincide con: "${result.similarityAnalysis.matchedPassword}"`);
+        }
+      } catch (error) {
+        console.log(`   ❌ Error: ${error.message}`);
+      }
+    }
+    console.log('\n✅ Pruebas completadas');
   }
 }
